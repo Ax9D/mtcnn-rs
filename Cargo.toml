@@ -9,7 +9,3 @@ edition = "2018"
 [dependencies]
  opencv = "0.49"
  tensorflow = "0.16.1" 
-
-[lib]
-name = "mtcnn"
-path = "mtcnn.rs"

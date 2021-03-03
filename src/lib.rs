@@ -1,9 +1,25 @@
-use std::ffi::c_void;
+#![allow(non_snake_case)]
 
-use crate::utils;
+use std::{ffi::c_void, fs::File, io::Read, path::Path};
+
 use opencv::{core::*, imgproc::rectangle};
 use tensorflow as tf;
 use tf::*;
+use std::error::Error;
+use std::result::Result;
+
+pub fn readBinaryProto<T: AsRef<str>>(path_str: T) -> Result<Vec<u8>, Box<dyn Error>> {
+    let path = Path::new(path_str.as_ref());
+    
+    let mut file = File::open(&path)?;
+    let mut s = Vec::new();
+
+    file.read_to_end(&mut s)?;
+    
+    Ok(s)
+}
+
+
 pub struct MTCNN {
     session: tf::Session,
     min_sizeData: tf::Tensor<f32>,
@@ -20,32 +36,32 @@ pub struct MTCNN {
 }
 
 impl MTCNN {
-    pub fn new(modelPath: &String) -> Self {
-        let graph_def = utils::tf::readBinaryProto(modelPath);
+    pub fn new<T: AsRef<str>>(modelPath: T) -> Result<Self, Box<dyn Error>> {
+        let graph_def = readBinaryProto(modelPath)?;
 
         let mut graph = tf::Graph::new();
         graph
             .import_graph_def(graph_def.as_slice(), &tf::ImportGraphDefOptions::new())
             .unwrap();
 
-        let session = Session::new(&SessionOptions::new(), &graph).unwrap();
+        let session = Session::new(&SessionOptions::new(), &graph)?;
 
-        let min_sizeData = Tensor::new(&[]).with_values(&[40f32]).unwrap();
+        let min_sizeData = Tensor::new(&[]).with_values(&[40f32])?;
         let thresholdsData = Tensor::new(&[3])
             .with_values(&[0.6f32, 0.7f32, 0.7f32])
             .unwrap();
-        let factorData = Tensor::new(&[]).with_values(&[0.709f32]).unwrap();
+        let factorData = Tensor::new(&[]).with_values(&[0.709f32])?;
 
-        let min_sizeOp = graph.operation_by_name_required("min_size").unwrap();
-        let thresholdsOp = graph.operation_by_name_required("thresholds").unwrap();
-        let factorOp = graph.operation_by_name_required("factor").unwrap();
+        let min_sizeOp = graph.operation_by_name_required("min_size")?;
+        let thresholdsOp = graph.operation_by_name_required("thresholds")?;
+        let factorOp = graph.operation_by_name_required("factor")?;
 
-        let inputOp = graph.operation_by_name_required("input").unwrap();
+        let inputOp = graph.operation_by_name_required("input")?;
 
-        let boxOp = graph.operation_by_name_required("box").unwrap();
-        let probOp = graph.operation_by_name_required("prob").unwrap();
+        let boxOp = graph.operation_by_name_required("box")?;
+        let probOp = graph.operation_by_name_required("prob")?;
 
-        Self {
+        Ok(Self {
             session,
             min_sizeData,
             thresholdsData,
@@ -58,7 +74,7 @@ impl MTCNN {
             inputOp,
             boxOp,
             probOp,
-        }
+        })
     }
     fn createImageTensor(image: &Mat) -> tf::Tensor<f32> {
         //image in BGR u8 format
@@ -80,7 +96,7 @@ impl MTCNN {
 
         imageTensor
     }
-    pub fn evaluate(&self, image: tf::Tensor<f32>) -> (tf::Tensor<f32>, tf::Tensor<f32>) {
+    pub fn evaluate(&self, image: tf::Tensor<f32>) -> Result<(tf::Tensor<f32>, tf::Tensor<f32>), Box<dyn Error>>{
         let mut args = SessionRunArgs::new();
 
         //Load our parameters for the model
@@ -96,10 +112,12 @@ impl MTCNN {
 
         self.session.run(&mut args).unwrap();
 
-        let bboxTensor: tf::Tensor<f32> = args.fetch(boxFetchToken).unwrap();
-        let probTensor: tf::Tensor<f32> = args.fetch(probFetchToken).unwrap();
+        let bboxTensor: tf::Tensor<f32> = args.fetch(boxFetchToken)?;
+        let probTensor: tf::Tensor<f32> = args.fetch(probFetchToken)?;
 
+        Ok(
         (bboxTensor, probTensor)
+        )
     }
     fn alignRect(rect: &mut Rect, width: i32, height: i32) {
         rect.x = rect.x.max(0);
@@ -113,10 +131,10 @@ impl MTCNN {
             rect.height = height - rect.y;
         }
     }
-    pub fn detectFacesAligned(&self, image: &Mat) -> Vec<Mat> {
+    pub fn detectFacesAligned(&self, image: &Mat) -> Result<Vec<Mat>, Box<dyn Error>> {
         let imageTensor = Self::createImageTensor(&image);
 
-        let (bboxes, probs) = self.evaluate(imageTensor);
+        let (bboxes, probs) = self.evaluate(imageTensor)?;
 
         //println!("{}",bboxes);
 
@@ -134,8 +152,29 @@ impl MTCNN {
 
             Self::alignRect(&mut faceRect, image.cols(), image.rows());
 
-            faces.push(Mat::roi(&image, faceRect).unwrap());
+            faces.push(Mat::roi(&image, faceRect)?);
         }
-        faces
+
+        Ok(
+            faces
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use opencv::{highgui::{imshow, wait_key}, imgcodecs::{IMREAD_COLOR, imread}};
+
+    use crate::MTCNN;
+
+    #[test]
+    fn basic_usage() {
+        let mtcnn = MTCNN::new("mtcnn.pb").unwrap();
+        let image = imread("faces.jpg", IMREAD_COLOR).unwrap();
+        let facesROI=mtcnn.detectFacesAligned(&image).unwrap();   
+
+        imshow("Detected Face", &facesROI[0]).unwrap();
+
+        wait_key(0).unwrap();
     }
 }
