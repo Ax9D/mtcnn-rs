@@ -2,7 +2,7 @@
 
 use std::{ffi::c_void, fs::File, io::Read, path::Path};
 
-use opencv::{core::*, imgproc::rectangle};
+use opencv::{core::*};
 use tensorflow as tf;
 use tf::*;
 use std::error::Error;
@@ -41,8 +41,7 @@ impl MTCNN {
 
         let mut graph = tf::Graph::new();
         graph
-            .import_graph_def(graph_def.as_slice(), &tf::ImportGraphDefOptions::new())
-            .unwrap();
+            .import_graph_def(graph_def.as_slice(), &tf::ImportGraphDefOptions::new())?;
 
         let session = Session::new(&SessionOptions::new(), &graph)?;
 
@@ -50,7 +49,8 @@ impl MTCNN {
         let thresholdsData = Tensor::new(&[3])
             .with_values(&[0.6f32, 0.7f32, 0.7f32])
             .unwrap();
-        let factorData = Tensor::new(&[]).with_values(&[0.709f32])?;
+
+        let factorData = Tensor::new(&[]).with_values(&[0.709f32]).unwrap();
 
         let min_sizeOp = graph.operation_by_name_required("min_size")?;
         let thresholdsOp = graph.operation_by_name_required("thresholds")?;
@@ -110,7 +110,7 @@ impl MTCNN {
         let boxFetchToken = args.request_fetch(&self.boxOp, 0);
         let probFetchToken = args.request_fetch(&self.probOp, 0);
 
-        self.session.run(&mut args).unwrap();
+        self.session.run(&mut args)?;
 
         let bboxTensor: tf::Tensor<f32> = args.fetch(boxFetchToken)?;
         let probTensor: tf::Tensor<f32> = args.fetch(probFetchToken)?;
@@ -134,7 +134,7 @@ impl MTCNN {
     pub fn detectFacesAligned(&self, image: &Mat) -> Result<Vec<Mat>, Box<dyn Error>> {
         let imageTensor = Self::createImageTensor(&image);
 
-        let (bboxes, probs) = self.evaluate(imageTensor)?;
+        let (bboxes, _probs) = self.evaluate(imageTensor)?;
 
         //println!("{}",bboxes);
 
